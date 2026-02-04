@@ -1,0 +1,32 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Go (Terratest)
+vendor/
+*.test
+*.out
+
+# OS/IDE
+.DS_Store
+.idea/
+*.swp
+*.swo
+
+# Secrets/Environment
+.env
+.env.*
+*.pem
+*.key
+
+# Claude
+.claude/plans/
