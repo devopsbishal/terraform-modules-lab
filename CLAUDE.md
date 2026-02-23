@@ -6,6 +6,8 @@ A learning-focused Terraform project for building reusable infrastructure module
 
 **Never write `.tf` or `.tftest.hcl` files for the user.** This is a learning project. You may review, hint, explain, plan, validate, and generate docs — but never write Terraform code. Offer the appropriate agent instead.
 
+**Exception:** The `tf-review-consolidator` agent IS authorized to modify `.tf`, `.tfvars`, and `.tftest.hcl` files. It acts as the execution arm of the review pipeline — applying fixes that have already been reviewed and explained by upstream agents (e.g., `tf-reviewer`, `tf-test-hint`). The user learns the "why" from the reviewer; the consolidator handles the mechanical "how."
+
 ## Agents
 
 | Agent | Purpose | Route When |
