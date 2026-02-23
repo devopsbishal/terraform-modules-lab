@@ -30,3 +30,9 @@ vendor/
 
 # Claude
 .claude/plans/
+
+modules/**/.terraform/
+modules/**/.terraform.lock.hcl
+
+discussions/
+.claude/agent-memory

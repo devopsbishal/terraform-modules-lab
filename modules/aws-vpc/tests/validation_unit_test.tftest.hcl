@@ -1,3 +1,4 @@
+mock_provider "aws" {}
 run "rejects_cidr_prefix_shorter_than_16" {
   command = plan
 
