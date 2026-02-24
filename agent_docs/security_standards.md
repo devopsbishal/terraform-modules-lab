@@ -1,6 +1,6 @@
 # Security Standards
 
-Reference for tf-reviewer when evaluating security posture.
+Reference for tf-reviewer and tf-module-writer when evaluating security posture.
 
 ## Encryption
 

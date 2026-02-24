@@ -16,8 +16,9 @@ Skills installed via skills.sh for agent reference.
 
 | Agent | Primary Skills |
 |-------|---------------|
+| tf-module-writer | terraform-style-guide, terraform-module-library, terraform-skill |
 | tf-reviewer | terraform-style-guide, terraform-skill |
-| tf-test-hint | terraform-test, terraform-skill |
+| tf-test-writer | terraform-test, terraform-skill |
 | tf-planner | terraform-module-library, terraform-stacks, terraform-skill |
 | tf-docs-gen | terraform-module-library |
 | tf-explainer | Any skill relevant to the concept |

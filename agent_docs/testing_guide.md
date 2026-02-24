@@ -1,6 +1,6 @@
 # Testing Guide
 
-Reference for tf-test-hint when guiding test development.
+Reference for tf-test-writer when generating tests.
 
 ## Test File Naming
 

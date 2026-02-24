@@ -36,3 +36,5 @@ modules/**/.terraform.lock.hcl
 
 discussions/
 .claude/agent-memory
+
+thought.txt

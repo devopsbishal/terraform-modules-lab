@@ -1,6 +1,6 @@
 # Coding Conventions
 
-Reference for tf-reviewer and other agents. Formatting is handled by `terraform fmt`.
+Reference for tf-reviewer, tf-module-writer, and other agents. Formatting is handled by `terraform fmt`.
 
 ## File Organization (HashiCorp Style Guide)
 
