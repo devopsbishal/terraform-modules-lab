@@ -12,6 +12,11 @@
 #   - Runs in us-east-1
 #
 # Resources are auto-created and auto-destroyed by terraform test.
+#
+# Note: Sequential run blocks share state. Each run replaces the previous one's
+# resources, which also exercises the destroy path for conditional resources
+# (e.g., when moving from a full-featured VPC to a minimal one, the IGW, flow
+# log, IAM role, etc. are destroyed before the new VPC is created).
 ################################################################################
 
 provider "aws" {
@@ -29,7 +34,7 @@ provider "aws" {
 # 1. Full Feature Deploy — Create all resources with all features enabled
 ################################################################################
 
-run "deploy_full_featured_vpc" {
+run "test_full_featured_vpc" {
   command = apply
 
   variables {
@@ -446,7 +451,7 @@ run "deploy_full_featured_vpc" {
 # 2. Minimal Deploy — VPC only, all optional features disabled
 ################################################################################
 
-run "deploy_minimal_vpc" {
+run "test_minimal_vpc" {
   command = apply
 
   variables {
@@ -535,7 +540,7 @@ run "deploy_minimal_vpc" {
 # 3. Flow Log with 60-second aggregation — Test non-default flow log setting
 ################################################################################
 
-run "deploy_flow_log_fast_aggregation" {
+run "test_flow_log_fast_aggregation" {
   command = apply
 
   variables {
@@ -577,5 +582,64 @@ run "deploy_flow_log_fast_aggregation" {
   assert {
     condition     = aws_cloudwatch_log_group.flow_log[0].name == "/aws/vpc-flow-log/${aws_vpc.this.id}"
     error_message = "Expected Log Group name to include the VPC ID."
+  }
+}
+
+################################################################################
+# 4. IPv6 Deploy — VPC with Amazon-provided IPv6 CIDR block
+################################################################################
+
+run "test_ipv6_vpc" {
+  command = apply
+
+  variables {
+    name                             = "integ-test-ipv6"
+    cidr_block                       = "10.96.0.0/20"
+    assign_generated_ipv6_cidr_block = true
+    create_igw                       = false
+    manage_default_security_group    = false
+    flow_log_enabled                 = false
+  }
+
+  # Verify VPC was created with correct IPv4 CIDR
+  assert {
+    condition     = aws_vpc.this.cidr_block == "10.96.0.0/20"
+    error_message = "Expected VPC CIDR to be '10.96.0.0/20', got '${aws_vpc.this.cidr_block}'."
+  }
+
+  # Verify IPv6 was requested on the VPC resource
+  assert {
+    condition     = aws_vpc.this.assign_generated_ipv6_cidr_block == true
+    error_message = "Expected assign_generated_ipv6_cidr_block to be true on the VPC resource."
+  }
+
+  # Verify AWS assigned an IPv6 CIDR block (Amazon-provided /56)
+  assert {
+    condition     = aws_vpc.this.ipv6_cidr_block != null && aws_vpc.this.ipv6_cidr_block != ""
+    error_message = "Expected VPC to have an IPv6 CIDR block assigned by AWS."
+  }
+
+  # Verify the IPv6 CIDR block looks like a valid /56
+  assert {
+    condition     = can(regex("::/56$", aws_vpc.this.ipv6_cidr_block))
+    error_message = "Expected IPv6 CIDR block to be a /56 prefix, got '${aws_vpc.this.ipv6_cidr_block}'."
+  }
+
+  # Verify IPv6 association ID is populated
+  assert {
+    condition     = aws_vpc.this.ipv6_association_id != null && aws_vpc.this.ipv6_association_id != ""
+    error_message = "Expected IPv6 association ID to be populated when IPv6 is enabled."
+  }
+
+  # Verify ipv6_cidr_block output matches the VPC resource
+  assert {
+    condition     = output.ipv6_cidr_block == aws_vpc.this.ipv6_cidr_block
+    error_message = "Expected ipv6_cidr_block output to match the VPC resource's IPv6 CIDR block."
+  }
+
+  # Verify ipv6_association_id output matches the VPC resource
+  assert {
+    condition     = output.ipv6_association_id == aws_vpc.this.ipv6_association_id
+    error_message = "Expected ipv6_association_id output to match the VPC resource's IPv6 association ID."
   }
 }
