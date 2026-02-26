@@ -115,7 +115,7 @@ run "test_reject_cidr_prefix_32" {
 }
 
 ################################################################################
-# name — Length Validation (1 to 64 characters)
+# name — Length Validation (1 to 46 characters)
 ################################################################################
 
 run "test_reject_name_empty" {
