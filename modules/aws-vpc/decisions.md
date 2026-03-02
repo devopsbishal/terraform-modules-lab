@@ -56,6 +56,20 @@ made, and what tradeoffs were weighed.
 **Review Findings**
 30. [Review Findings: Potential Improvements](#review-findings-potential-improvements)
 
+**IPAM Integration (Phase 3)**
+31. [`cidr_block` Changed From Required to Optional](#cidr_block-changed-from-required-to-optional)
+32. [Derived IPAM Mode (No Boolean Toggle)](#derived-ipam-mode-no-boolean-toggle)
+33. [XOR Precondition for IPv4 Mutual Exclusivity](#xor-precondition-for-ipv4-mutual-exclusivity)
+34. ["Not Both" Precondition for IPv6](#not-both-precondition-for-ipv6)
+35. [Paired Preconditions for Netmask/Pool Coupling](#paired-preconditions-for-netmaskpool-coupling)
+36. [`ipv4_netmask_length` Range: /16 to /28](#ipv4_netmask_length-range-16-to-28)
+37. [`ipv6_netmask_length` Validates Against Allowlist](#ipv6_netmask_length-validates-against-allowlist)
+38. [Dead Locals Removed](#dead-locals-removed)
+39. [IPAM Outputs Echo Input Variables](#ipam-outputs-echo-input-variables)
+40. [IPv6 IPAM Added Alongside IPv4 (Same Phase)](#ipv6-ipam-added-alongside-ipv4-same-phase)
+41. [Null Guards on Existing `cidr_block` Validations](#null-guards-on-existing-cidr_block-validations)
+42. [IPAM Integration Tests Deferred to Composition Layer](#ipam-integration-tests-deferred-to-composition-layer)
+
 ---
 
 ## Module Scope: Bundling Flow Logs, IAM, and CloudWatch
@@ -259,10 +273,19 @@ or when the policy must survive the role's deletion. Neither applies here.
 
 **Decision:** `cidr_block` is a required variable with no default value.
 
-**Rationale:** There is no safe universal CIDR default. If the module defaulted
-to `10.0.0.0/16`, two VPCs in the same account would collide when peered. VPC
-peering, Transit Gateway, and VPN connections all require non-overlapping
-address spaces. Forcing the caller to choose prevents silent address conflicts.
+**Updated in Phase 3:** `cidr_block` was changed from required (`nullable = false`,
+no default) to optional (`default = null`) to support IPAM-based CIDR allocation.
+The mutual exclusivity precondition on `aws_vpc.this` now enforces that exactly
+one of `cidr_block` or `ipv4_ipam_pool_id` is provided, replacing `nullable = false`
+as the safety mechanism. Existing callers who provide `cidr_block` are completely
+unaffected. See [cidr_block Changed From Required to Optional](#cidr_block-changed-from-required-to-optional)
+for the full rationale.
+
+**Original Rationale:** There is no safe universal CIDR default. If the module
+defaulted to `10.0.0.0/16`, two VPCs in the same account would collide when
+peered. VPC peering, Transit Gateway, and VPN connections all require
+non-overlapping address spaces. Forcing the caller to choose prevents silent
+address conflicts.
 
 ---
 
@@ -336,6 +359,14 @@ Always check derived names against AWS service limits.
 ## `nullable = false` on Required Variables
 
 **Decision:** Both `name` and `cidr_block` set `nullable = false`.
+
+**Updated in Phase 3:** `cidr_block` no longer uses `nullable = false` because
+it is now an optional variable (`default = null`) to support IPAM-based CIDR
+allocation. The safety that `nullable = false` provided is now handled by the
+XOR precondition on `aws_vpc.this`, which rejects the case where both
+`cidr_block` and `ipv4_ipam_pool_id` are null. `name` retains `nullable = false`
+because it is always required regardless of CIDR source. See
+[cidr_block Changed From Required to Optional](#cidr_block-changed-from-required-to-optional).
 
 **Rationale:** These variables have no default, making them required. But
 Terraform allows passing `name = null` explicitly, which bypasses all
@@ -719,9 +750,11 @@ than a breaking one.
 
 ### `nullable = false` on Boolean Variables (Low Priority)
 
-The `name` and `cidr_block` variables use `nullable = false`, but the boolean
-variables (`create_igw`, `flow_log_enabled`, `manage_default_security_group`,
-etc.) do not. A caller passing `create_igw = null` would get a type error from
+The `name` variable uses `nullable = false` (`cidr_block` previously did too,
+but this was removed in Phase 3 -- see
+[cidr_block Changed From Required to Optional](#cidr_block-changed-from-required-to-optional)).
+The boolean variables (`create_igw`, `flow_log_enabled`,
+`manage_default_security_group`, etc.) do not. A caller passing `create_igw = null` would get a type error from
 the `count` expression rather than a clean "variable cannot be null" message.
 Adding `nullable = false` to all variables with defaults would make the module
 more defensive. Deferred because explicitly passing `null` for a boolean is
@@ -733,3 +766,357 @@ In `validation_unit_test.tftest.hcl` line 118, the section header reads
 "Length Validation (1 to 64 characters)" but the actual validation enforces
 1 to 46 characters. The test inputs are correct -- only the comment is stale
 from before the name length decision was made.
+
+---
+
+# IPAM Integration (Phase 3)
+
+Phase 3 added support for AWS VPC IPAM (IP Address Manager) as an alternative
+CIDR source. Instead of providing a hardcoded `cidr_block`, callers can
+reference an IPAM pool and let IPAM allocate the CIDR automatically. This
+enables centralized IP address management across multiple VPCs and accounts.
+
+The changes touched `variables.tf` (4 new variables, 1 modified variable),
+`main.tf` (4 new resource arguments, 6 preconditions), `outputs.tf` (2 new
+outputs), and `locals.tf` (dead code removed). All 102 existing unit tests
+continue to pass. No existing behavior was changed for callers who provide
+`cidr_block`.
+
+---
+
+## `cidr_block` Changed From Required to Optional
+
+**Decision:** Changed `cidr_block` from a required variable (`nullable = false`,
+no default) to an optional variable (`default = null`, nullable) to support
+IPAM-based CIDR allocation.
+
+**Rationale:** When using IPAM, the VPC gets its CIDR from a pool allocation
+rather than a user-provided string. The `cidr_block` argument on `aws_vpc`
+must be `null` when `ipv4_ipam_pool_id` is set -- AWS rejects configurations
+with both. Making `cidr_block` optional with `default = null` is the standard
+Terraform pattern for "exactly one of these two inputs."
+
+**Safety mechanism change:** Previously, `nullable = false` prevented callers
+from passing `cidr_block = null` (which would bypass validation blocks and crash
+in the provider). That protection is now provided by the XOR precondition:
+
+```hcl
+condition = (var.cidr_block != null) != (var.ipv4_ipam_pool_id != null)
+```
+
+This fires at plan time when both are null (the `false != false = false` case),
+producing a clear error message. The safety net is equivalent -- it just moved
+from the variable declaration to the resource lifecycle.
+
+**Backward compatibility:** Existing callers who pass `cidr_block = "10.0.0.0/16"`
+are completely unaffected. All four IPAM variables default to `null`, so they
+are invisible to existing consumers. The precondition evaluates to
+`(true) != (false)` = `true` and passes silently.
+
+**Alternatives Considered:** Keeping `cidr_block` required and adding a separate
+`cidr_block_from_ipam` output that consumers reference instead. Rejected because
+it would mean the module cannot actually use IPAM -- the `aws_vpc` resource
+needs `cidr_block = null` when IPAM is in use, which is impossible if the
+variable is required.
+
+---
+
+## Derived IPAM Mode (No Boolean Toggle)
+
+**Decision:** IPAM mode is derived from `var.ipv4_ipam_pool_id != null` rather
+than using a separate boolean variable like `use_ipam_pool`.
+
+**Rationale:** The community `terraform-aws-vpc` module uses a
+`vpc_use_ipam_pool` boolean to toggle IPAM behavior. This creates a redundant
+state problem: a caller can set `use_ipam_pool = true` without providing
+`ipv4_ipam_pool_id`, or set `use_ipam_pool = false` while providing one. Both
+are misconfigurations that must be caught with additional validation.
+
+By deriving the mode from whether the pool ID is provided, the module eliminates
+an entire class of misconfiguration. One variable serves double duty: it both
+enables IPAM mode and provides the required pool reference. Fewer variables,
+fewer failure modes, simpler consumer experience.
+
+**Alternatives Considered:** Following the community module pattern with an
+explicit toggle. Rejected because the toggle adds no information that is not
+already conveyed by the presence of the pool ID. The community module likely
+uses the toggle for historical reasons (it predates the IPAM feature and needed
+a way to change `cidr_block` behavior without breaking existing callers).
+
+---
+
+## XOR Precondition for IPv4 Mutual Exclusivity
+
+**Decision:** The first precondition on `aws_vpc.this` uses XOR logic:
+`(var.cidr_block != null) != (var.ipv4_ipam_pool_id != null)`.
+
+**Rationale:** The `!=` operator applied to two boolean expressions functions
+as XOR (exclusive or). It returns `true` when exactly one operand is `true`.
+This enforces that exactly one IPv4 CIDR source is provided:
+
+| `cidr_block` | `ipv4_ipam_pool_id` | XOR result | Meaning |
+|:---:|:---:|:---:|---|
+| set | null | `true != false` = **true** | Standard CIDR usage -- passes |
+| null | set | `false != true` = **true** | IPAM usage -- passes |
+| set | set | `true != true` = **false** | Both provided -- fails |
+| null | null | `false != false` = **false** | Neither provided -- fails |
+
+All four combinations behave correctly. The error message
+"Exactly one of cidr_block or ipv4_ipam_pool_id must be provided" covers both
+failure modes because the XOR semantics naturally enforce "exactly one."
+
+**Key Terraform pattern:** Preconditions are the only way to enforce cross-variable
+constraints. `validation` blocks can only reference `var.self`. This pattern
+extends the existing precondition approach used for flow log variables (see
+[Cross-Variable Preconditions](#cross-variable-preconditions)).
+
+---
+
+## "Not Both" Precondition for IPv6
+
+**Decision:** The IPv6 conflict precondition uses "not both" logic:
+`!(var.assign_generated_ipv6_cidr_block && var.ipv6_ipam_pool_id != null)`
+rather than XOR.
+
+**Rationale:** The IPv6 case differs from IPv4. A VPC must always have an IPv4
+CIDR (either from `cidr_block` or IPAM), so the IPv4 precondition enforces
+"exactly one." But IPv6 is entirely optional -- a VPC can have no IPv6 at all.
+There are three valid IPv6 states:
+
+1. No IPv6 (`assign_generated_ipv6_cidr_block = false`, `ipv6_ipam_pool_id = null`)
+2. Amazon-provided IPv6 (`assign_generated_ipv6_cidr_block = true`)
+3. IPAM-provided IPv6 (`ipv6_ipam_pool_id` set)
+
+The only invalid state is both simultaneously, because they are two different
+mechanisms for obtaining an IPv6 CIDR and the AWS API rejects the combination.
+The "not both" (`!(A && B)`) condition permits all three valid states while
+blocking the one invalid state.
+
+**Why this was a review finding:** The original IPAM integration had five
+preconditions covering IPv4 mutual exclusivity and netmask/pool coupling for
+both address families, but omitted the IPv6 conflict guard. The review
+identified this as a MUST FIX: without it, a caller who has
+`assign_generated_ipv6_cidr_block = true` in an existing config and adds
+`ipv6_ipam_pool_id` would get an opaque AWS API error at apply time instead
+of a clear plan-time message.
+
+---
+
+## Paired Preconditions for Netmask/Pool Coupling
+
+**Decision:** Each address family has two preconditions enforcing bidirectional
+coupling between pool ID and netmask length:
+
+```hcl
+# IPv4: pool requires netmask
+condition = var.ipv4_ipam_pool_id == null || var.ipv4_netmask_length != null
+# IPv4: netmask requires pool
+condition = var.ipv4_ipam_pool_id != null || var.ipv4_netmask_length == null
+```
+
+The same pattern repeats for IPv6.
+
+**Rationale:** A single precondition like
+`(var.ipv4_ipam_pool_id != null) == (var.ipv4_netmask_length != null)` would be
+logically equivalent but can only produce one error message. With paired
+preconditions, each direction gets its own specific message:
+
+- "ipv4_netmask_length is required when ipv4_ipam_pool_id is provided"
+  -- tells the user exactly what to add.
+- "ipv4_netmask_length cannot be set without ipv4_ipam_pool_id"
+  -- tells the user exactly what to remove.
+
+This follows the module's established pattern where preconditions name the
+specific variables involved (see
+[Cross-Variable Preconditions](#cross-variable-preconditions)).
+
+**Alternatives Considered:** A single combined precondition with a generic
+message. Rejected because actionable error messages that tell the user what to
+fix are more valuable than compact code.
+
+---
+
+## `ipv4_netmask_length` Range: /16 to /28
+
+**Decision:** The `ipv4_netmask_length` validation allows /16 through /28,
+which is wider than `cidr_block`'s /16 through /24 guardrail.
+
+**Rationale:** This is an intentional inconsistency, not an accidental
+divergence. The /24 lower bound on `cidr_block` is an opinionated guardrail
+targeting beginners who might accidentally create a VPC too small to be useful
+(see [CIDR Prefix Range: /16 to /24](#cidr-prefix-range-16-to-24)). IPAM users
+are a different audience:
+
+1. **Not beginners.** Teams using IPAM have centralized IP address management,
+   which implies organizational maturity and deliberate sizing decisions.
+2. **Legitimate small VPCs.** IPAM enables patterns like /28 transit VPCs,
+   /26 management VPCs, or /25 service mesh VPCs that would be impractical
+   with manual CIDR selection but make sense in automated IP management.
+3. **AWS maximum flexibility.** AWS allows IPAM to allocate VPC CIDRs from
+   /16 to /28. Restricting to /24 would prevent valid IPAM use cases.
+
+The /16 upper bound is shared because it is an AWS hard limit, not an opinion.
+
+**Alternatives Considered:** Tightening to /16-/24 for consistency. Rejected
+because it would arbitrarily limit IPAM users who have legitimate reasons for
+smaller VPCs. The guardrail exists to prevent mistakes; IPAM users making
+deliberate allocations are not making mistakes.
+
+---
+
+## `ipv6_netmask_length` Validates Against Allowlist
+
+**Decision:** The `ipv6_netmask_length` validation uses an explicit allowlist
+`contains([44, 48, 52, 56, 60], ...)` rather than a range check
+`>= 44 && <= 60`.
+
+**Rationale:** AWS allocates IPv6 VPC CIDRs only in /4 increments. The valid
+values are /44, /48, /52, /56, and /60. A range check would accept values like
+/45, /47, /50, or /59, all of which the AWS API would reject at apply time with
+an error that does not explain the /4 increment requirement.
+
+The allowlist catches invalid increments at plan time with a clear message:
+"The ipv6_netmask_length must be one of: 44, 48, 52, 56, or 60 (AWS requires
+/4 increments)."
+
+This follows the same pattern as `flow_log_cloudwatch_log_group_retention_in_days`,
+which uses `contains([0, 1, 3, 5, 7, 14, 30, ...])` rather than a range because
+CloudWatch only accepts specific retention periods.
+
+**Why this was a review finding:** The original implementation used a range
+check (44-60). The review identified that AWS only supports /4 increments and
+recommended tightening to an allowlist.
+
+---
+
+## Dead Locals Removed
+
+**Decision:** Removed `use_ipv4_ipam` and `use_ipv6_ipam` from `locals.tf`.
+
+**Rationale:** These booleans were initially added as convenience values:
+
+```hcl
+use_ipv4_ipam = var.ipv4_ipam_pool_id != null
+use_ipv6_ipam = var.ipv6_ipam_pool_id != null
+```
+
+But no resource, output, or conditional in the module referenced them. They were
+dead code. The module has an established pattern where every local has at least
+one consumer (`create_flow_log` drives `count` on `aws_flow_log.this`,
+`create_flow_log_log_group` drives `count` on `aws_cloudwatch_log_group.flow_log`,
+etc.). These locals broke that pattern.
+
+If a future change needs these booleans -- for example, conditional behavior
+that differs between CIDR mode and IPAM mode -- they can be re-added at that
+time with a clear consumer.
+
+**Alternatives Considered:** Keeping them as forward-looking convenience
+booleans. Rejected because speculative locals are confusing in infrastructure
+code. Readers expect every local to have a purpose, and tracing "where is this
+used?" only to find "nowhere" wastes time.
+
+---
+
+## IPAM Outputs Echo Input Variables
+
+**Decision:** The `ipv4_ipam_pool_id` and `ipv6_ipam_pool_id` outputs return
+`var.ipv4_ipam_pool_id` and `var.ipv6_ipam_pool_id` respectively, rather than
+reading from the `aws_vpc` resource.
+
+**Rationale:** The `aws_vpc` resource does not export `ipv4_ipam_pool_id` or
+`ipv6_ipam_pool_id` as readable computed attributes. These are write-only
+arguments in the AWS provider -- you set them during creation, but the resource
+state does not expose them afterward. Echoing the input variable is the only
+way to surface the pool ID in the module's outputs.
+
+**Why this is useful:** In a composition that wires `aws-ipam-pool` into
+`aws-vpc`, a downstream module (e.g., a subnet module) might need to know which
+IPAM pool the VPC was allocated from. Without this output, the composition
+would need to thread the pool ID through separately. The echo pattern is a
+common convenience in the Terraform ecosystem.
+
+**Why this could be questioned:** The consumer already has the pool ID (they
+passed it in). The output adds no computed information. However, in larger
+compositions, the VPC module call may be several layers deep, and having the
+pool ID available on the VPC module output simplifies wiring.
+
+---
+
+## IPv6 IPAM Added Alongside IPv4 (Same Phase)
+
+**Decision:** Added `ipv6_ipam_pool_id` and `ipv6_netmask_length` in the same
+phase as the IPv4 IPAM variables, rather than deferring IPv6 IPAM to a later
+phase.
+
+**Rationale:** The implementation pattern is identical between IPv4 and IPv6
+IPAM: a pool ID variable, a netmask length variable, a null-guarded validation,
+and paired preconditions for coupling. The incremental effort was minimal (two
+variables, two preconditions, one conflict guard), and deferring would mean
+touching the VPC module's precondition block, variable file, and output file
+a second time.
+
+The risk was also minimal: the IPv6 path is independent of the IPv4 path. A
+bug in IPv6 IPAM handling would not affect IPv4 CIDR or IPv4 IPAM users.
+
+**Alternatives Considered:** Deferring IPv6 IPAM to a separate phase. Rejected
+because the cost of two separate review-test-document cycles exceeded the risk
+of adding both in one pass.
+
+---
+
+## Null Guards on Existing `cidr_block` Validations
+
+**Decision:** Prepended `var.cidr_block == null || ...` to both existing
+`cidr_block` validation conditions.
+
+**Rationale:** When `cidr_block` was required (`nullable = false`), it could
+never be `null` at validation time. Making it optional means `null` is now a
+valid input (representing "use IPAM instead"). Without the null guard, the
+existing validations would crash:
+
+- `can(cidrhost(null, 0))` would fail with an evaluation error.
+- `split("/", null)` would fail with "cannot split null value."
+
+The null guard short-circuits: when `cidr_block` is `null`, the condition
+evaluates to `true` immediately and the validation body is never reached. When
+`cidr_block` is not `null`, the guard passes through to the original validation
+logic unchanged.
+
+**Key property:** Existing callers who provide `cidr_block = "10.0.0.0/16"`
+hit the `false || ...` path, which evaluates to `...` -- the original validation.
+The null guard is invisible to them.
+
+**Alternatives Considered:** Removing the validations entirely and relying on
+the AWS provider to reject bad CIDRs. Rejected because provider errors are
+cryptic and fire at apply time. Plan-time validation with clear messages is
+always preferable.
+
+---
+
+## IPAM Integration Tests Deferred to Composition Layer
+
+**Decision:** No integration tests (`command = apply`) were added for the IPAM
+paths. Testing is deferred to the composition that wires `aws-ipam`,
+`aws-ipam-pool`, and `aws-vpc` together.
+
+**Rationale:** IPAM integration tests require real AWS infrastructure that is
+expensive and slow to provision:
+
+1. An IPAM instance must exist (takes several minutes to create).
+2. An IPAM pool must be provisioned with CIDRs.
+3. The IPAM pool must be in the correct scope and locale for the VPC's region.
+4. IPAM instances cannot be immediately deleted.
+
+The module's six preconditions and four variable validations are all plan-time
+checks that run correctly with `mock_provider "aws"`. The plan-time logic is
+fully testable without AWS credentials. The only thing integration tests would
+verify is that the AWS API accepts the configuration -- and since IPAM VPC
+allocation is a well-documented AWS feature, the risk of API-level surprises
+is low.
+
+Real end-to-end testing belongs in the composition layer (e.g.,
+`compositions/ipam-vpc/`) where all three modules are wired together and a
+single `terraform test` run can provision the full stack.
+
+**Revisit when:** Building the IPAM composition, or if a deployment fails in a
+way that unit tests did not catch.

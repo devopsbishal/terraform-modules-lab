@@ -75,6 +75,59 @@ module "vpc" {
 }
 ```
 
+### IPv4 CIDR from IPAM
+
+```hcl
+module "vpc" {
+  source = "../../modules/aws-vpc"
+
+  # Required
+  name = "ipam-managed"
+
+  # IPv4 from IPAM pool (no cidr_block)
+  ipv4_ipam_pool_id  = module.ipam_pool.pool_id
+  ipv4_netmask_length = 20
+}
+```
+
+### IPv6 CIDR from IPAM
+
+```hcl
+module "vpc" {
+  source = "../../modules/aws-vpc"
+
+  # Required
+  name       = "dual-stack-ipam"
+  cidr_block = "10.0.0.0/16"
+
+  # IPv6 from IPAM pool (instead of Amazon-provided)
+  ipv6_ipam_pool_id  = module.ipv6_ipam_pool.pool_id
+  ipv6_netmask_length = 56
+}
+```
+
+### Full IPAM (IPv4 + IPv6)
+
+```hcl
+module "vpc" {
+  source = "../../modules/aws-vpc"
+
+  # Required
+  name = "full-ipam"
+
+  # Both address families from IPAM
+  ipv4_ipam_pool_id   = module.ipv4_pool.pool_id
+  ipv4_netmask_length = 20
+  ipv6_ipam_pool_id   = module.ipv6_pool.pool_id
+  ipv6_netmask_length = 56
+
+  tags = {
+    Environment = "production"
+    ManagedBy   = "ipam"
+  }
+}
+```
+
 ## Requirements
 
 | Name | Version |
@@ -87,7 +140,7 @@ module "vpc" {
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | assign_generated_ipv6_cidr_block | Request an Amazon-provided IPv6 /56 CIDR block with a /56 prefix length. | `bool` | `false` | no |
-| cidr_block | The IPv4 CIDR block for the VPC (e.g. 10.0.0.0/16). Must be between /16 and /24. | `string` | n/a | yes |
+| cidr_block | The IPv4 CIDR block for the VPC (e.g. 10.0.0.0/16). Optional when using IPAM -- set ipv4_ipam_pool_id instead. Must be between /16 and /24. | `string` | `null` | no |
 | create_igw | Whether to create an Internet Gateway and attach it to the VPC. | `bool` | `true` | no |
 | enable_dns_hostnames | Whether to enable DNS hostnames in the VPC. Required for private hosted zones and EKS. | `bool` | `true` | no |
 | enable_dns_support | Whether to enable DNS support in the VPC. Must be true for enable_dns_hostnames to work. | `bool` | `true` | no |
@@ -101,6 +154,10 @@ module "vpc" {
 | flow_log_max_aggregation_interval | The maximum interval of time (in seconds) during which flow log records are captured and aggregated. Valid values: 60, 600. | `number` | `600` | no |
 | flow_log_traffic_type | The type of traffic to capture in VPC flow logs. Valid values: ACCEPT, REJECT, ALL. | `string` | `"ALL"` | no |
 | instance_tenancy | A tenancy option for instances launched into the VPC. Use 'dedicated' for compliance workloads requiring hardware isolation. | `string` | `"default"` | no |
+| ipv4_ipam_pool_id | ID of the IPAM pool to allocate the VPC's IPv4 CIDR from. Mutually exclusive with cidr_block. | `string` | `null` | no |
+| ipv4_netmask_length | IPv4 netmask length for IPAM allocation (16-28). Required when ipv4_ipam_pool_id is set. | `number` | `null` | no |
+| ipv6_ipam_pool_id | ID of the IPAM pool to allocate the VPC's IPv6 CIDR from. | `string` | `null` | no |
+| ipv6_netmask_length | IPv6 netmask length for IPAM allocation. Must be one of: 44, 48, 52, 56, 60. Required when ipv6_ipam_pool_id is set. | `number` | `null` | no |
 | manage_default_security_group | Whether to adopt and lock down the VPC's default security group by removing all ingress and egress rules. | `bool` | `true` | no |
 | name | The name for the VPC and related resources. Used in Name tags and resource naming. Must be 1-46 characters, alphanumeric and hyphens only. | `string` | n/a | yes |
 | tags | A map of tags to apply to all resources created by this module. | `map(string)` | `{}` | no |
@@ -116,8 +173,10 @@ module "vpc" {
 | flow_log_iam_role_arn | The ARN of the IAM role used by VPC flow logs. Returns the auto-created role ARN, the user-provided role ARN, or null. |
 | flow_log_id | The ID of the VPC flow log, if created. |
 | internet_gateway_id | The ID of the Internet Gateway, if created. |
+| ipv4_ipam_pool_id | The ID of the IPv4 IPAM pool used for CIDR allocation, if any. |
 | ipv6_association_id | The association ID for the IPv6 CIDR block. |
 | ipv6_cidr_block | The IPv6 CIDR block of the VPC, if IPv6 is enabled. |
+| ipv6_ipam_pool_id | The ID of the IPv6 IPAM pool used for CIDR allocation, if any. |
 | main_route_table_id | The ID of the main route table associated with the VPC. |
 | owner_id | The AWS account ID of the VPC owner. |
 | vpc_arn | The ARN of the VPC. |
@@ -183,6 +242,35 @@ The `name` variable is capped at 46 characters. This accounts for suffixes like 
 ### CloudWatch retention values
 
 The `flow_log_cloudwatch_log_group_retention_in_days` variable only accepts values that CloudWatch Logs supports: 0, 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653.
+
+### IPAM integration
+
+The module supports allocating VPC CIDR blocks from [AWS VPC IPAM](https://docs.aws.amazon.com/vpc/latest/ipam/what-it-is-ipam.html) pools instead of specifying CIDRs directly.
+
+**Addressing modes:**
+
+| Mode | cidr_block | ipv4_ipam_pool_id | ipv4_netmask_length | Result |
+|------|-----------|-------------------|---------------------|--------|
+| Static IPv4 | `"10.0.0.0/16"` | null | null | Uses the provided CIDR directly |
+| IPAM IPv4 | null | `"ipam-pool-0abc..."` | `20` | IPAM allocates a /20 from the pool |
+| Both set | `"10.0.0.0/16"` | `"ipam-pool-0abc..."` | `20` | **Error** -- mutually exclusive |
+| Neither set | null | null | null | **Error** -- exactly one required |
+
+**IPv6 modes:**
+
+| Mode | assign_generated_ipv6_cidr_block | ipv6_ipam_pool_id | ipv6_netmask_length | Result |
+|------|--------------------------------|-------------------|---------------------|--------|
+| Amazon-provided | `true` | null | null | AWS assigns a /56 block |
+| IPAM IPv6 | `false` | `"ipam-pool-0abc..."` | `56` | IPAM allocates from the pool |
+| Both set | `true` | `"ipam-pool-0abc..."` | `56` | **Error** -- mutually exclusive |
+
+**Pairing rules enforced by preconditions:**
+
+- `ipv4_netmask_length` is required when `ipv4_ipam_pool_id` is set, and cannot be set without it.
+- `ipv6_netmask_length` is required when `ipv6_ipam_pool_id` is set, and cannot be set without it.
+- `assign_generated_ipv6_cidr_block` and `ipv6_ipam_pool_id` are mutually exclusive.
+
+**Relationship to other modules:** This module consumes IPAM pool IDs. The pools themselves are created by `aws-ipam` and `aws-ipam-pool` modules (when available). Pass `module.ipam_pool.pool_id` as the `ipv4_ipam_pool_id` or `ipv6_ipam_pool_id` value.
 
 ### Tag merging
 

@@ -8,10 +8,41 @@ resource "aws_vpc" "this" {
   enable_dns_hostnames             = var.enable_dns_hostnames
   enable_dns_support               = var.enable_dns_support
   instance_tenancy                 = var.instance_tenancy
+  ipv4_ipam_pool_id                = var.ipv4_ipam_pool_id
+  ipv4_netmask_length              = var.ipv4_netmask_length
+  ipv6_ipam_pool_id                = var.ipv6_ipam_pool_id
+  ipv6_netmask_length              = var.ipv6_netmask_length
 
   enable_network_address_usage_metrics = var.enable_network_address_usage_metrics
 
   tags = local.tags
+
+  lifecycle {
+    precondition {
+      condition     = (var.cidr_block != null) != (var.ipv4_ipam_pool_id != null)
+      error_message = "Exactly one of cidr_block or ipv4_ipam_pool_id must be provided."
+    }
+    precondition {
+      condition     = var.ipv4_ipam_pool_id == null || var.ipv4_netmask_length != null
+      error_message = "ipv4_netmask_length is required when ipv4_ipam_pool_id is provided."
+    }
+    precondition {
+      condition     = var.ipv4_ipam_pool_id != null || var.ipv4_netmask_length == null
+      error_message = "ipv4_netmask_length cannot be set without ipv4_ipam_pool_id."
+    }
+    precondition {
+      condition     = var.ipv6_ipam_pool_id == null || var.ipv6_netmask_length != null
+      error_message = "ipv6_netmask_length is required when ipv6_ipam_pool_id is provided."
+    }
+    precondition {
+      condition     = var.ipv6_ipam_pool_id != null || var.ipv6_netmask_length == null
+      error_message = "ipv6_netmask_length cannot be set without ipv6_ipam_pool_id."
+    }
+    precondition {
+      condition     = !(var.assign_generated_ipv6_cidr_block && var.ipv6_ipam_pool_id != null)
+      error_message = "assign_generated_ipv6_cidr_block and ipv6_ipam_pool_id are mutually exclusive. Use one or the other for IPv6 CIDR allocation."
+    }
+  }
 }
 
 ################################################################################

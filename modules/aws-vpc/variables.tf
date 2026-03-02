@@ -5,17 +5,17 @@ variable "assign_generated_ipv6_cidr_block" {
 }
 
 variable "cidr_block" {
-  description = "The IPv4 CIDR block for the VPC (e.g. 10.0.0.0/16)."
+  description = "The IPv4 CIDR block for the VPC (e.g. 10.0.0.0/16). Optional when using IPAM — set ipv4_ipam_pool_id instead."
   type        = string
+  default     = null
   validation {
-    condition     = can(cidrhost(var.cidr_block, 0))
+    condition     = var.cidr_block == null || can(cidrhost(var.cidr_block, 0))
     error_message = "The cidr_block value must be a valid IPv4 CIDR notation (e.g. 10.0.0.0/16)."
   }
   validation {
-    condition     = can(tonumber(split("/", var.cidr_block)[1])) && tonumber(split("/", var.cidr_block)[1]) >= 16 && tonumber(split("/", var.cidr_block)[1]) <= 24
+    condition     = var.cidr_block == null || (can(tonumber(split("/", var.cidr_block)[1])) && tonumber(split("/", var.cidr_block)[1]) >= 16 && tonumber(split("/", var.cidr_block)[1]) <= 24)
     error_message = "The CIDR block prefix length must be between /16 and /24."
   }
-  nullable = false
 }
 
 variable "create_igw" {
@@ -113,6 +113,38 @@ variable "instance_tenancy" {
   validation {
     condition     = contains(["default", "dedicated"], var.instance_tenancy)
     error_message = "The instance_tenancy must be either 'default' or 'dedicated'."
+  }
+}
+
+variable "ipv4_ipam_pool_id" {
+  description = "ID of the IPAM pool to allocate the VPC's IPv4 CIDR from. Mutually exclusive with cidr_block."
+  type        = string
+  default     = null
+}
+
+variable "ipv4_netmask_length" {
+  description = "IPv4 netmask length for IPAM allocation. Required when ipv4_ipam_pool_id is set."
+  type        = number
+  default     = null
+  validation {
+    condition     = var.ipv4_netmask_length == null || (var.ipv4_netmask_length >= 16 && var.ipv4_netmask_length <= 28)
+    error_message = "The ipv4_netmask_length must be between 16 and 28."
+  }
+}
+
+variable "ipv6_ipam_pool_id" {
+  description = "ID of the IPAM pool to allocate the VPC's IPv6 CIDR from."
+  type        = string
+  default     = null
+}
+
+variable "ipv6_netmask_length" {
+  description = "IPv6 netmask length for IPAM allocation. Required when ipv6_ipam_pool_id is set."
+  type        = number
+  default     = null
+  validation {
+    condition     = var.ipv6_netmask_length == null || contains([44, 48, 52, 56, 60], var.ipv6_netmask_length)
+    error_message = "The ipv6_netmask_length must be one of: 44, 48, 52, 56, or 60 (AWS requires /4 increments)."
   }
 }
 

@@ -33,9 +33,19 @@ output "internet_gateway_id" {
   value       = var.create_igw ? aws_internet_gateway.this[0].id : null
 }
 
+output "ipv4_ipam_pool_id" {
+  description = "The ID of the IPv4 IPAM pool used for CIDR allocation, if any."
+  value       = var.ipv4_ipam_pool_id
+}
+
 output "ipv6_association_id" {
   description = "The association ID for the IPv6 CIDR block."
   value       = aws_vpc.this.ipv6_association_id
+}
+
+output "ipv6_ipam_pool_id" {
+  description = "The ID of the IPv6 IPAM pool used for CIDR allocation, if any."
+  value       = var.ipv6_ipam_pool_id
 }
 
 output "ipv6_cidr_block" {
