@@ -34,6 +34,8 @@ vendor/
 modules/**/.terraform/
 modules/**/.terraform.lock.hcl
 
+compositions/**/.terraform.lock.hcl
+
 discussions/
 .claude/agent-memory
 
