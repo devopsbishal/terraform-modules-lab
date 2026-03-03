@@ -14,8 +14,9 @@ output "pool_cidrs" {
 }
 
 output "pool_id" {
-  description = "The ID of the IPAM pool."
+  description = "The ID of the IPAM pool. Waits for all pool CIDRs to be provisioned before returning, ensuring the pool is ready for allocations."
   value       = aws_vpc_ipam_pool.this.id
+  depends_on  = [aws_vpc_ipam_pool_cidr.this]
 }
 
 output "pool_state" {

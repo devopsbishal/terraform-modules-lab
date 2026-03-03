@@ -67,6 +67,10 @@ resource "aws_vpc_ipam_pool" "this" {
       ])
       error_message = "Each explicit CIDR must match the pool's address_family. IPv4 pools require IPv4 CIDRs (e.g. 10.0.0.0/8); IPv6 pools require IPv6 CIDRs (e.g. 2001:db8::/32)."
     }
+    precondition {
+      condition     = var.source_ipam_pool_id == null || var.locale != null
+      error_message = "locale is required for child pools (when source_ipam_pool_id is set). Set locale to the AWS region where allocations from this pool will be used."
+    }
   }
 }
 
